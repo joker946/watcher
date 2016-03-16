@@ -18,10 +18,13 @@
 from watcher.decision_engine.strategy.strategies import basic_consolidation
 from watcher.decision_engine.strategy.strategies import dummy_strategy
 from watcher.decision_engine.strategy.strategies import outlet_temp_control
+from watcher.decision_engine.strategy.strategies import sd
 
+StandardDeviation = sd.StandardDeviation
 BasicConsolidation = basic_consolidation.BasicConsolidation
 OutletTempControl = outlet_temp_control.OutletTempControl
 DummyStrategy = dummy_strategy.DummyStrategy
 
 
-__all__ = (BasicConsolidation, OutletTempControl, DummyStrategy)
+__all__ = (BasicConsolidation, OutletTempControl, DummyStrategy,
+           StandardDeviation)

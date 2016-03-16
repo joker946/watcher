@@ -34,6 +34,8 @@ class FakerMetricsCollector(object):
             result = self.get_usage_node_cpu(resource_id)
         elif meter_name == "cpu_util":
             result = self.get_average_usage_vm_cpu(resource_id)
+        elif meter_name == "memory.resident":
+            result = self.get_average_usage_vm_memory(resource_id)
         elif meter_name == "hardware.ipmi.node.outlet_temperature":
             result = self.get_average_outlet_temperature(resource_id)
         return result

@@ -24,7 +24,7 @@ import oslo_cache
 from oslo_config import cfg
 from oslo_log import log
 
-from watcher._i18n import _LE
+from watcher._i18n import _LE, _
 from watcher.common import exception
 from watcher.decision_engine.model.vm_state import VMState
 from watcher.decision_engine.strategy.strategies.base import BaseStrategy
@@ -33,20 +33,23 @@ from watcher.metrics_engine.cluster_history.ceilometer import \
 
 LOG = log.getLogger(__name__)
 
+metrics = ['cpu_util', 'memory.resident']
+thresholds_dict = {'cpu_util': 0.2, 'memory.resident': 0.2}
+weights_dict = {'cpu_util_weight': 1.0, 'memory.resident_weight': 1.0}
 
 sd_opts = [
-    cfg.FloatOpt('cpu_threshold',
-                 default=0.2,
-                 help='Max threshold standard deviation values for cpu.'),
-    cfg.FloatOpt('ram_threshold',
-                 default=0.2,
-                 help='Max threshold standard deviation values for ram.'),
-    cfg.FloatOpt('cpu_weight',
-                 default=1.0,
-                 help=''),
-    cfg.FloatOpt('ram_weight',
-                 default=1.0,
-                 help=''),
+    cfg.ListOpt('metrics',
+                default=metrics,
+                required=True,
+                help='Metrics used as rates of cluster loads.'),
+    cfg.DictOpt('thresholds',
+                default=thresholds_dict,
+                help=''),
+    cfg.DictOpt('weights',
+                default=weights_dict,
+                help='These weights used to calculate '
+                     'common standard deviation. Name of weight '
+                     'contains meter name and _weight suffix.'),
 ]
 
 CONF = cfg.CONF
@@ -74,10 +77,9 @@ class StandardDeviation(BaseStrategy):
         super(StandardDeviation, self).__init__(name, description, osc)
         self._ceilometer = None
         self._nova = None
-        self.cpu_threshold = CONF.watcher_standard_deviation.cpu_threshold
-        self.ram_threshold = CONF.watcher_standard_deviation.ram_threshold
-        self.cpu_weight = CONF.watcher_standard_deviation.cpu_weight
-        self.ram_weight = CONF.watcher_standard_deviation.ram_weight
+        self.weights = CONF.watcher_standard_deviation.weights
+        self.metrics = CONF.watcher_standard_deviation.metrics
+        self.thresholds = CONF.watcher_standard_deviation.thresholds
 
     @property
     def ceilometer(self):
@@ -106,17 +108,24 @@ class StandardDeviation(BaseStrategy):
 
         :param vm_load: dict that contains vm uuid and utilization info.
         :param host_vcpus: int
+        :return: float value
         """
 
         return vm_load['cpu_util'] * (vm_load['vcpus']/float(host_vcpus))
 
     @MEMOIZE
     def get_vm_load(self, vm_uuid):
+        """
+        Gather vm load through ceilometer statistic.
+
+        :param vm_uuid: vm for which statistic is gathered.
+        :return: dict
+        """
         LOG.warning('get_vm_load started')
         flavor_id = self.nova.servers.get(vm_uuid).flavor['id']
         vm_vcpus = self.nova.flavors.get(flavor_id).vcpus
         vm_load = {'uuid': vm_uuid, 'vcpus': vm_vcpus}
-        for meter in ['cpu_util', 'memory.resident']:
+        for meter in self.metrics:
             avg_meter = self.ceilometer.statistic_aggregation(
                             resource_id=vm_uuid,
                             meter_name=meter,
@@ -154,7 +163,7 @@ class StandardDeviation(BaseStrategy):
             host_vcpus = self.nova.hypervisors.get(h_id).vcpus
             hosts_load[hypervisor_id]['vcpus'] = host_vcpus
 
-            for metric in ['cpu_util', 'memory.resident']:
+            for metric in self.metrics:
                 hosts_load[hypervisor_id][metric] = 0
 
             vms_id = current_model.get_mapping(). \
@@ -170,11 +179,7 @@ class StandardDeviation(BaseStrategy):
                     vm_load['cpu_util'] = \
                         self.transform_vm_cpu_to_host_cpu(vm_load, host_vcpus)
 
-                LOG.warning("{0}: {1}, {2}".format(vm_load['uuid'],
-                                                   vm_load['cpu_util'],
-                                                   vm_load['memory.resident']))
-
-                for metric in ['cpu_util', 'memory.resident']:
+                for metric in self.metrics:
                     hosts_load[hypervisor_id][metric] += vm_load[metric]
         LOG.warning(hosts_load)
         return hosts_load
@@ -188,6 +193,20 @@ class StandardDeviation(BaseStrategy):
         sd = math.sqrt(variaton)
         return sd
 
+    def calculate_weighted_sd(self, metrics, sd_case):
+        weighted_sd = 0
+        for metric, value in zip(self.metrics, sd_case):
+            try:
+                weighted_sd += value * float(self.weights[metric+'_weight'])
+            except KeyError, exc:
+                LOG.exception(exc)
+                raise exception.WatcherException(
+                    _("Incorrect mapping: could not find "
+                      "associated '%s_weight' for"
+                      " '%s' in weight dict.").format(metric)
+                )
+        return weighted_sd
+
     def calculate_migration_case(self, hosts, vm_id, src_hp_id, dst_hp_id):
         migration_case = []
         new_hosts = deepcopy(hosts)
@@ -195,7 +214,7 @@ class StandardDeviation(BaseStrategy):
         d_host_vcpus = new_hosts[dst_hp_id]['vcpus']
         s_host_vcpus = new_hosts[src_hp_id]['vcpus']
         transform_method = self.transform_vm_cpu_to_host_cpu
-        for metric in ['cpu_util', 'memory.resident']:
+        for metric in self.metrics:
             if metric is 'cpu_util':
                 new_hosts[src_hp_id][metric] -= transform_method(vm_load,
                                                                  s_host_vcpus)
@@ -206,10 +225,8 @@ class StandardDeviation(BaseStrategy):
                 new_hosts[dst_hp_id][metric] += vm_load[metric]
         LOG.warning(new_hosts)
         normalized_hosts = self.normalize_hosts_load(new_hosts)
-        for metric in ['cpu_util', 'memory.resident']:
+        for metric in self.metrics:
             migration_case.append(self.get_sd(normalized_hosts, metric))
-        LOG.warning('calculate_migration_case {0} {1}'.format(
-            migration_case[0], migration_case[1]))
         migration_case.append(new_hosts)
         return migration_case
 
@@ -219,7 +236,7 @@ class StandardDeviation(BaseStrategy):
             vms_id = current_model.get_mapping(). \
                 get_node_vms_from_id(source_hp_id)
             for vm_id in vms_id:
-                min_sd_case = {'value': 1}
+                min_sd_case = {'value': len(self.metrics)}
                 vm = current_model.get_vm_from_id(vm_id)
                 if vm.state != VMState.ACTIVE.value:
                     continue
@@ -229,12 +246,14 @@ class StandardDeviation(BaseStrategy):
                     sd_case = self.calculate_migration_case(hosts, vm_id,
                                                             source_hp_id,
                                                             dst_hp_id)
-                    common_sd = self.cpu_weight * sd_case[0] + \
-                        self.ram_weight * sd_case[1]
-                    if common_sd < min_sd_case['value']:
-                        min_sd_case = {'host': dst_hp_id, 'value': common_sd,
+
+                    weighted_sd = self.calculate_weighted_sd(self.metrics,
+                                                             sd_case[:-1])
+
+                    if weighted_sd < min_sd_case['value']:
+                        min_sd_case = {'host': dst_hp_id, 'value': weighted_sd,
                                        's_host': source_hp_id, 'vm': vm_id}
-                    LOG.warning(common_sd)
+                    LOG.warning('Weighted SD: {0}'.format(weighted_sd))
                     LOG.warning(min_sd_case)
                 vm_host_map.append(min_sd_case)
         return sorted(vm_host_map, key=lambda x: x['value'])
@@ -242,11 +261,12 @@ class StandardDeviation(BaseStrategy):
     def check_threshold(self, current_model):
         hosts_load = self.get_hosts_load(current_model)
         normalized_load = self.normalize_hosts_load(hosts_load)
-        cpu_sd = self.get_sd(normalized_load, 'cpu_util')
-        ram_sd = self.get_sd(normalized_load, 'memory.resident')
-        LOG.warning("cpu_sd: {0}, mem_sd: {1}".format(cpu_sd, ram_sd))
-        if cpu_sd > self.cpu_threshold or ram_sd > self.ram_threshold:
-            return self.simulate_migrations(current_model, hosts_load)
+        for metric in self.metrics:
+            metric_sd = self.get_sd(normalized_load, metric)
+            LOG.warning('Standard Deviation of {0}: {1}'.format(metric,
+                                                                metric_sd))
+            if metric_sd > float(self.thresholds[metric]):
+                return self.simulate_migrations(current_model, hosts_load)
 
     def add_migration(self,
                       resource_id,
@@ -286,22 +306,23 @@ class StandardDeviation(BaseStrategy):
         LOG.warning(migration)
         if migration:
             hosts_load = self.get_hosts_load(current_model)
-            min_cpu = 1
-            min_ram = 1
+            min_sd = 1
             for vm_host in migration:
                 vm_load = self.calculate_migration_case(hosts_load,
                                                         vm_host['vm'],
                                                         vm_host['s_host'],
                                                         vm_host['host'])
-                if vm_load[0] < min_cpu or vm_load[1] < min_ram:
-                    min_cpu = vm_load[0] if vm_load[0] < min_cpu else min_cpu
-                    min_ram = vm_load[1] if vm_load[1] < min_ram else min_ram
+                weighted_sd = self.calculate_weighted_sd(self.metrics,
+                                                         vm_load[:-1])
+                if weighted_sd < min_sd:
+                    min_sd = weighted_sd
                     hosts_load = vm_load[-1]
                     self.migrate(current_model, vm_host['vm'],
                                  vm_host['s_host'], vm_host['host'])
-                if min_cpu < self.cpu_threshold or \
-                   min_ram < self.ram_threshold:
-                    break
+
+                for metric, value in zip(self.metrics, vm_load[:-1]):
+                    if value < float(self.thresholds[metric]):
+                        break
         self.solution.model = current_model
         self.solution.efficacy = 100
         return self.solution

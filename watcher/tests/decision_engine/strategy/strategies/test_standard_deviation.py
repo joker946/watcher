@@ -115,7 +115,7 @@ class TestStandardDeviation(base.BaseTestCase):
         sd.nova.hypervisors.get = mock.MagicMock()
         sd.nova.hypervisors.get().memory_mb = 2000
         self.assertEqual(sd.calculate_migration_case(
-            self.hosts_load_assert, "VM_5", "Node_2", "Node_1")[2]["Node_1"],
+            self.hosts_load_assert, "VM_5", "Node_2", "Node_1")[-1]["Node_1"],
             {'cpu_util': 10.0, 'memory.resident': 21, 'vcpus': 2})
 
     def test_standard_deviation_simulate_migrations(self):
@@ -135,7 +135,7 @@ class TestStandardDeviation(base.BaseTestCase):
 
     def test_standard_deviation_check_threshold(self):
         sd = strategies.StandardDeviation()
-        sd.cpu_threshold = 0.001
+        sd.thresholds = {'cpu_util': 0.001, 'memory.resident': 0.2}
         sd.ceilometer = mock.MagicMock(
             statistic_aggregation=self.fake_metrics.mock_get_statistics)
         sd.nova.servers.get = mock.MagicMock()
@@ -154,7 +154,7 @@ class TestStandardDeviation(base.BaseTestCase):
     def test_standard_deviation_execute_one_migration(self):
         sd = strategies.StandardDeviation()
         model = self.fake_cluster.generate_scenario_1()
-        sd.cpu_threshold = 0.001
+        sd.thresholds = {'cpu_util': 0.001, 'memory.resident': 0.2}
         sd.ceilometer = mock.MagicMock(
             statistic_aggregation=self.fake_metrics.mock_get_statistics)
         sd.nova.servers.get = mock.MagicMock()
@@ -177,8 +177,7 @@ class TestStandardDeviation(base.BaseTestCase):
     def test_standard_deviation_execute_multiply_migrations(self):
         sd = strategies.StandardDeviation()
         model = self.fake_cluster.generate_scenario_1()
-        sd.cpu_threshold = 0.042
-        sd.ram_threshold = 0.0001
+        sd.thresholds = {'cpu_util': 0.042, 'memory.resident': 0.0001}
         sd.ceilometer = mock.MagicMock(
             statistic_aggregation=self.fake_metrics.mock_get_statistics)
         sd.nova.servers.get = mock.MagicMock()
@@ -203,8 +202,7 @@ class TestStandardDeviation(base.BaseTestCase):
     def test_standard_deviation_execute_nothing_to_migrate(self):
         sd = strategies.StandardDeviation()
         model = self.fake_cluster.generate_scenario_1()
-        sd.cpu_threshold = 0.042
-        sd.ram_threshold = 0.0001
+        sd.thresholds = {'cpu_util': 0.042, 'memory.resident': 0.0001}
         sd.ceilometer = mock.MagicMock(
             statistic_aggregation=self.fake_metrics.mock_get_statistics)
         sd.nova.servers.get = mock.MagicMock()

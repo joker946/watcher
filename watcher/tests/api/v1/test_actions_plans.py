@@ -23,6 +23,7 @@ from watcher.applier import rpcapi as aapi
 from watcher.common import context
 from watcher.common import utils
 from watcher.db import api as db_api
+from watcher.decision_engine import rpcapi as deapi
 from watcher import objects
 from watcher.tests.api import base as api_base
 from watcher.tests.api import utils as api_utils

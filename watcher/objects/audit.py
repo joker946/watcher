@@ -85,6 +85,7 @@ class Audit(base.WatcherObject):
         'state': obj_utils.str_or_none,
         'deadline': obj_utils.datetime_or_str_or_none,
         'audit_template_id': obj_utils.int_or_none,
+        'period': obj_utils.int_or_none,
     }
 
     @staticmethod

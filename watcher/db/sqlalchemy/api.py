@@ -326,35 +326,16 @@ class Connection(api.BaseConnection):
         if filters is None:
             filters = []
 
-        if 'uuid' in filters:
-            query = query.filter_by(uuid=filters['uuid'])
-        if 'type' in filters:
-            query = query.filter_by(type=filters['type'])
-        if 'state' in filters:
-            query = query.filter_by(state=filters['state'])
-        if 'audit_template_id' in filters:
-            query = query.filter_by(
-                audit_template_id=filters['audit_template_id'])
-        if 'audit_template_uuid' in filters:
-            query = query.join(
-                models.AuditTemplate,
-                models.Audit.audit_template_id == models.AuditTemplate.id)
-            query = query.filter(
-                models.AuditTemplate.uuid == filters['audit_template_uuid'])
-        if 'audit_template_name' in filters:
-            query = query.join(
-                models.AuditTemplate,
-                models.Audit.audit_template_id == models.AuditTemplate.id)
-            query = query.filter(
-                models.AuditTemplate.name ==
-                filters['audit_template_name'])
+        plain_fields = ['uuid', 'type', 'state', 'audit_template_id']
 
-        query = self.__add_soft_delete_mixin_filters(
-            query, filters, models.Audit)
-        query = self.__add_timestamp_mixin_filters(
-            query, filters, models.Audit)
+        join_fieldmap = {
+            'audit_template_uuid': ("uuid", models.AuditTemplate),
+            'audit_template_name': ("name", models.AuditTemplate),
+        }
 
-        return query
+        return self._add_filters(
+            query=query, model=models.Audit, filters=filters,
+            plain_fields=plain_fields, join_fieldmap=join_fieldmap)
 
     def _add_action_plans_filters(self, query, filters):
         if filters is None:

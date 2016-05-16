@@ -61,6 +61,7 @@ def get_test_audit(**kwargs):
         'created_at': kwargs.get('created_at'),
         'updated_at': kwargs.get('updated_at'),
         'deleted_at': kwargs.get('deleted_at'),
+        'period': kwargs.get('period', 3600),
     }
 
 

@@ -212,6 +212,10 @@ class AuditAlreadyExists(Conflict):
     msg_fmt = _("An audit with UUID %(uuid)s already exists")
 
 
+class AuditPeriodNotSpecified(Invalid):
+    msg_fmt = _("Period of audit must be specified for %(audit_type)s.")
+
+
 class AuditReferenced(Invalid):
     msg_fmt = _("Audit %(audit)s is referenced by one or multiple action "
                 "plans")

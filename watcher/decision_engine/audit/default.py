@@ -13,17 +13,26 @@
 # implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from apscheduler.schedulers import background
+from concurrent import futures
+import time
+
+from oslo_config import cfg
 from oslo_log import log
 
+from watcher.common import context
 from watcher.common.messaging.events import event as watcher_event
 from watcher.decision_engine.audit import base
 from watcher.decision_engine.messaging import events as de_events
 from watcher.decision_engine.planner import manager as planner_manager
 from watcher.decision_engine.strategy.context import default as default_context
+from watcher.objects import action_plan as action_objects
 from watcher.objects import audit as audit_objects
 
 
 LOG = log.getLogger(__name__)
+CONF = cfg.CONF
 
 
 class DefaultAuditHandler(base.BaseAuditHandler):
@@ -76,6 +85,16 @@ class DefaultAuditHandler(base.BaseAuditHandler):
             solution = self.strategy_context.execute_strategy(audit_uuid,
                                                               request_context)
 
+            if audit.type == audit_objects.AuditType.CONTINUOUS.value:
+                a_plan_filters = {'audit_uuid': audit.uuid,
+                                  'state': action_objects.State.RECOMMENDED}
+                action_plans = action_objects.ActionPlan.list(
+                    request_context,
+                    filters=a_plan_filters)
+                for plan in action_plans:
+                    plan.state = action_objects.State.CANCELLED
+                    plan.save()
+
             self.planner.schedule(request_context, audit.id, solution)
 
             # change state of the audit to SUCCEEDED
@@ -85,3 +104,51 @@ class DefaultAuditHandler(base.BaseAuditHandler):
             LOG.exception(e)
             self.update_audit_state(request_context, audit_uuid,
                                     audit_objects.State.FAILED)
+
+
+class PeriodicAuditHandler(DefaultAuditHandler):
+
+    def __init__(self, messaging):
+        super(PeriodicAuditHandler, self).__init__(messaging)
+        self._executor = futures.ThreadPoolExecutor(
+            CONF.watcher_decision_engine.max_workers)
+        self.audits = []
+        self._scheduler = None
+
+    @property
+    def executor(self):
+        return self._executor
+
+    @property
+    def scheduler(self):
+        if self._scheduler is None:
+            self._scheduler = background.BackgroundScheduler()
+        return self._scheduler
+
+    def execute(self, audit, context):
+        time.sleep(audit.period)
+        if audit.state == audit_objects.State.CANCELLED:
+            return
+        super(PeriodicAuditHandler, self).execute(audit.uuid, context)
+        self.audits.remove(audit.uuid)
+        return audit.uuid
+
+    def launch_audits_periodically(self):
+        audit_context = context.RequestContext(is_admin=True)
+        audit_filters = {
+            'type': audit_objects.AuditType.CONTINUOUS.value,
+            'state__in': (audit_objects.State.PENDING,
+                          audit_objects.State.ONGOING,
+                          audit_objects.State.SUCCEEDED)
+        }
+        audits = audit_objects.Audit.list(audit_context,
+                                          filters=audit_filters)
+        for audit in audits:
+            if audit.uuid not in self.audits:
+                self.audits.append(audit.uuid)
+                self.executor.submit(self.execute, audit, audit_context)
+
+    def start(self):
+        self.scheduler.add_job(self.launch_audits_periodically, 'interval',
+                               seconds=1)
+        self.scheduler.start()

@@ -99,7 +99,7 @@ class WSGIService(service.ServiceBase):
         self.server.reset()
 
 
-class Service(service.ServiceBase, dispatcher.EventDispatcher):
+class Service(service.Service, dispatcher.EventDispatcher):
 
     API_VERSION = '1.0'
 

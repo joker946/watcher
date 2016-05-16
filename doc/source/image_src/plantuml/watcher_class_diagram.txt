@@ -46,6 +46,7 @@ class Audit {
     String type // length = 20
     String state // length = 20, nullable = true
     DateTime deadline // nullable = true
+    Integer period // nullable = true
     <i>Integer audit_template_id</i> // ForeignKey('audit_templates.id') \
 nullable = false
 }

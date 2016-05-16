@@ -173,6 +173,7 @@ class Audit(Base):
     deadline = Column(DateTime, nullable=True)
     audit_template_id = Column(Integer, ForeignKey('audit_templates.id'),
                                nullable=False)
+    period = Column(Integer, nullable=True, default=3600)
 
 
 class Action(Base):
